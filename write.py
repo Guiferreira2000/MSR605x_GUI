@@ -14,12 +14,12 @@ def is_valid_track3(data):
 
 def write_tracks(msr, track1, track2, track3):
     """ Write data to each track with validation """
-    # if not is_valid_track1(track1):
-    #     raise ValueError("Invalid data for Track 1. Must be alphanumeric.")
-    # if not is_valid_track2(track2):
-    #     raise ValueError("Invalid data for Track 2. Must be numeric only.")
-    # if not is_valid_track3(track3):
-    #     raise ValueError("Invalid data for Track 3. Must be numeric only.")
+    if not is_valid_track1(track1):
+        raise ValueError("Invalid data for Track 1. Must be alphanumeric.")
+    if not is_valid_track2(track2):
+        raise ValueError("Invalid data for Track 2. Must be numeric only.")
+    if not is_valid_track3(track3):
+        raise ValueError("Invalid data for Track 3. Must be numeric only.")
 
     msr.write_track(1, track1.encode('utf-8'))
     msr.write_track(2, track2.encode('utf-8'))
@@ -33,9 +33,9 @@ def main():
 
         while True:
             # Input data for each track
-            track1_data = "%TESTE02?"
-            track2_data = "12347"
-            track3_data = ";1234?"
+            track1_data = input("Enter data for Track 1: ")
+            track2_data = input("Enter data for Track 2: ")
+            track3_data = input("Enter data for Track 3: ")
 
             # Validate and write data to card
             try:
