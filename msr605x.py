@@ -197,7 +197,7 @@ def write_card(msr, track1, track2, track3):
         b'?' + FS
     )
     msr.send_message(ESC + b'w' + data_block)
-    print("Write command sent. Swipe the card...")
+    print("Write command sent. Swipe the card...", flush=True)
     status = wait_for_write_completion(msr)
     if status is not None:
         if status == 0x30:
