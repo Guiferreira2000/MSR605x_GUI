@@ -36,10 +36,24 @@ class MSR605X:
         self.hid_endpoint = None
 
     def connect(self):
-        """Establish a connection to the MSR605X."""
-        if self.dev.is_kernel_driver_active(0):
-            self.dev.detach_kernel_driver(0)
-        self.dev.set_configuration()
+        """Establish a connection to the MSR605X with retry on 'Resource busy' errors."""
+        max_attempts = 3
+        attempts = 0
+        while attempts < max_attempts:
+            try:
+                if self.dev.is_kernel_driver_active(0):
+                    self.dev.detach_kernel_driver(0)
+                self.dev.set_configuration()
+                break
+            except usb.core.USBError as e:
+                if hasattr(e, 'errno') and e.errno == 16:  # Resource busy
+                    attempts += 1
+                    time.sleep(1)
+                    usb.util.dispose_resources(self.dev)
+                else:
+                    raise e
+        if attempts == max_attempts:
+            raise usb.core.USBError("Unable to set configuration after several attempts: Resource busy")
         config = self.dev.get_active_configuration()
         interface = config[(0, 0)]
         self.hid_endpoint = interface.endpoints()[0]
@@ -70,8 +84,11 @@ class MSR605X:
         try:
             return bytes(self.hid_endpoint.read(64, timeout=timeout))
         except usb.core.USBError as error:
-            if hasattr(error, 'errno') and error.errno == 110:
-                return None
+            if hasattr(error, 'errno'):
+                if error.errno == 110:  # Timeout
+                    return None
+                elif error.errno == 75:  # Overflow error: ignore and return None
+                    return None
             raise error
 
     def send_message(self, message):
@@ -120,6 +137,10 @@ class MSR605X:
         if response and response.startswith(ESC):
             return response
         return None
+
+# Helper function to release the device.
+def finalize_device(msr):
+    usb.util.dispose_resources(msr.dev)
 
 # Utility functions
 
@@ -262,6 +283,25 @@ def parse_track_data(data):
                 break
     return tracks
 
+def parse_and_clean_tracks(raw_data):
+    """
+    1) Parse raw card data into track strings.
+    2) Remove leading/trailing sentinels (% or ; at start, ? at end).
+    3) Return a dict with cleaned track values.
+    """
+    raw_tracks = parse_track_data(raw_data)
+    cleaned = {}
+    for track_name, track_value in raw_tracks.items():
+        track_value = track_value.strip()  # remove whitespace
+        # Remove leading '%' or ';'
+        if track_value.startswith('%') or track_value.startswith(';'):
+            track_value = track_value[1:]
+        # Remove trailing '?' if present
+        if track_value.endswith('?'):
+            track_value = track_value[:-1]
+        cleaned[track_name] = track_value
+    return cleaned
+
 def wait_for_write_completion(msr, timeout=10):
     """Wait for the write operation to complete by polling for a status."""
     start_time = time.time()
@@ -292,6 +332,30 @@ def write_card(msr, track1, track2, track3):
             print(f"Write failed. Status code: {hex(status)}")
     else:
         print("Write operation timed out or no status response received.")
+
+def read_card_data():
+    """
+    High-level function for reading and returning cleaned track data.
+    Returns a dict: {"Track 1": <cleaned>, "Track 2": <cleaned>, "Track 3": <cleaned>}
+    """
+    msr = MSR605X()
+    msr.connect()
+    msr.reset()
+    print("MSR605X connected and ready.")
+    set_bpc_bpi(msr, mode="read")
+    print("Sending read command for all tracks...")
+    msr.send_message(ESC + b"r")
+    print("Swipe a card to read data...")
+    response = msr.recv_message(timeout=10000)
+    if response:
+        raw_data = response.decode('ascii', errors='ignore')
+        print("\nRaw Card Data:", raw_data)
+        cleaned_tracks = parse_and_clean_tracks(raw_data)
+    else:
+        cleaned_tracks = {"Track 1": "", "Track 2": "", "Track 3": ""}
+    # Release the device resources so it’s not left busy
+    finalize_device(msr)
+    return cleaned_tracks
 
 def main():
     parser = argparse.ArgumentParser(description="MSR605X read/write/erase utility")
