@@ -2,6 +2,7 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
 from msr605x import read_card_data
+from waitress import serve
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -15,4 +16,4 @@ def read():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000)
+    serve(app, host="127.0.0.1", port=5000)

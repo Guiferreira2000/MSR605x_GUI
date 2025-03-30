@@ -14,6 +14,7 @@ This file contains:
 
 import usb.core
 import usb.util
+import usb.backend.libusb1  # Explicitly import the libusb1 backend
 import time
 import argparse
 
@@ -30,9 +31,11 @@ class MSR605X:
         if "idVendor" not in kwargs:
             kwargs["idVendor"] = 0x0801
             kwargs["idProduct"] = 0x0003
-        self.dev = usb.core.find(**kwargs)
+        # Force pyusb to use the libusb1 backend
+        backend = usb.backend.libusb1.get_backend()
+        self.dev = usb.core.find(backend=backend, **kwargs)
         if self.dev is None:
-            raise ValueError("Device not found. Check connection.")
+            raise ValueError("Device not found. Check connection and driver installation.")
         self.hid_endpoint = None
 
     def connect(self):
@@ -41,8 +44,12 @@ class MSR605X:
         attempts = 0
         while attempts < max_attempts:
             try:
-                if self.dev.is_kernel_driver_active(0):
-                    self.dev.detach_kernel_driver(0)
+                try:
+                    if self.dev.is_kernel_driver_active(0):
+                        self.dev.detach_kernel_driver(0)
+                except NotImplementedError:
+                    # Not supported on Windows; ignore.
+                    pass
                 self.dev.set_configuration()
                 break
             except usb.core.USBError as e:
