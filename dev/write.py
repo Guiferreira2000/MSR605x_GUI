@@ -7,8 +7,9 @@ if __name__ == "__main__":
     sys.argv = [
         sys.argv[0],
         "write",
-        "--track1", "GUILH55",
-        "--track2", "324345765445",
-        "--track3", "975786567898768"
+        "--track1", "GUILHERMEFERREIRA",
+        "--track2", "2024122820250328",
+        "--track3", "0000000000000005",
+        "--coercivity", "hi"
     ]
     main()

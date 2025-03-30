@@ -4,10 +4,12 @@ WIP library for the MSR605X
 
 This file contains:
   - The MSR605X class with low-level and high-level functions.
-  - Utility functions for BPC/BPI setup, parsing track data, write completion, and writing card data.
+  - Utility functions for BPC/BPI setup, parsing track data, write completion,
+    writing card data, and erasing card data.
   - A main() function using subparsers:
       * "read" mode: reads card data.
       * "write" mode: writes card data with track data passed as command-line arguments.
+      * "erase" mode: erases card data for specified tracks.
 """
 
 import usb.core
@@ -111,7 +113,6 @@ class MSR605X:
             return True
         return False
 
-
     def read_tracks(self):
         """Read data from all tracks."""
         self.send_message(ESC + b"r")
@@ -149,6 +150,91 @@ def set_bpc_bpi(msr, mode="read"):
         print(f"Track 3 BPI ACK: {msr.recv_message(timeout=2000)}")
     else:
         raise ValueError("Mode must be 'read' or 'write'")
+
+def set_coercivity(msr, mode="hi"):
+    """
+    Set the coercivity of the card.
+    mode: 'hi' for Hi-Co (ESC + x) or 'low' for Low-Co (ESC + y)
+    """
+    if mode.lower() == "hi":
+        msr.send_message(ESC + b'x')
+        resp = msr.recv_message(timeout=2000)
+        if resp != ESC + b'0':
+            print("Failed to set Hi-Co")
+        else:
+            print("Coercivity set to Hi-Co")
+    elif mode.lower() == "low":
+        msr.send_message(ESC + b'y')
+        resp = msr.recv_message(timeout=2000)
+        if resp != ESC + b'0':
+            print("Failed to set Low-Co")
+        else:
+            print("Coercivity set to Low-Co")
+    else:
+        raise ValueError("Invalid coercivity mode. Choose 'hi' or 'low'.")
+
+def get_coercivity_status(msr):
+    """
+    Retrieve the current coercivity status.
+    Sends <ESC> d and checks if the response indicates Hi-Co (H) or Low-Co (L).
+    """
+    msr.send_message(ESC + b'd')
+    resp = msr.recv_message(timeout=2000)
+    if resp and len(resp) >= 2:
+        if resp[1:2] == b'H':
+            return "hi"
+        elif resp[1:2] == b'L':
+            return "low"
+    return "unknown"
+
+def erase_card(msr, select_byte):
+    """
+    Erase card data using the erase command.
+    [Select Byte] is a byte specifying which tracks to erase:
+      0x00: Track 1 only
+      0x02: Track 2 only
+      0x04: Track 3 only
+      0x03: Track 1 & 2
+      0x05: Track 1 & 3
+      0x06: Track 2 & 3
+      0x07: Track 1, 2 & 3
+    """
+    msr.send_message(ESC + b'c' + bytes([select_byte]))
+    resp = msr.recv_message(timeout=2000)
+    if resp == ESC + b'0':
+        print("Erase successful!")
+    elif resp == ESC + b'A':
+        print("Erase failed!")
+    else:
+        print("Unexpected response:", resp)
+
+def parse_tracks_arg(tracks_str):
+    """
+    Parse a string representing tracks to erase into the corresponding select byte.
+    Acceptable values:
+      "1" or "track1"   => 0x00
+      "2" or "track2"   => 0x02
+      "3" or "track3"   => 0x04
+      "1,2"             => 0x03
+      "1,3"             => 0x05
+      "2,3"             => 0x06
+      "1,2,3" or "all"  => 0x07
+    """
+    mapping = {
+        "1": 0x00,
+        "track1": 0x00,
+        "2": 0x02,
+        "track2": 0x02,
+        "3": 0x04,
+        "track3": 0x04,
+        "1,2": 0x03,
+        "1,3": 0x05,
+        "2,3": 0x06,
+        "1,2,3": 0x07,
+        "all": 0x07,
+    }
+    key = tracks_str.replace(" ", "").lower()
+    return mapping.get(key)
 
 def parse_track_data(data):
     """Parse raw card data into individual tracks."""
@@ -208,7 +294,7 @@ def write_card(msr, track1, track2, track3):
         print("Write operation timed out or no status response received.")
 
 def main():
-    parser = argparse.ArgumentParser(description="MSR605X read/write utility")
+    parser = argparse.ArgumentParser(description="MSR605X read/write/erase utility")
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     # Read sub-command (no extra args)
@@ -219,6 +305,11 @@ def main():
     write_parser.add_argument("--track1", required=True, help="Data for Track 1")
     write_parser.add_argument("--track2", required=True, help="Data for Track 2")
     write_parser.add_argument("--track3", required=True, help="Data for Track 3")
+    write_parser.add_argument("--coercivity", choices=["hi", "low"], default="hi", help="Coercivity mode to use (hi or low)")
+
+    # Erase sub-command requires tracks specification.
+    erase_parser = subparsers.add_parser("erase", help="Erase card data")
+    erase_parser.add_argument("--tracks", default="all", help="Tracks to erase (e.g., '1', '2', '3', '1,2', '1,3', '2,3', 'all')")
 
     args = parser.parse_args()
 
@@ -246,11 +337,22 @@ def main():
             print("No data read from the card. Please try again.")
     elif args.mode == "write":
         set_bpc_bpi(msr, mode="write")
+        set_coercivity(msr, mode=args.coercivity)
+        current_coercivity = get_coercivity_status(msr)
+        print(f"Current coercivity status: {current_coercivity}")
         # Convert track data to bytes.
         track1_data = args.track1.encode()
         track2_data = args.track2.encode()
         track3_data = args.track3.encode()
         write_card(msr, track1_data, track2_data, track3_data)
+    elif args.mode == "erase":
+        set_bpc_bpi(msr, mode="write")
+        sel_byte = parse_tracks_arg(args.tracks)
+        if sel_byte is None:
+            print("Invalid tracks specification.")
+        else:
+            print(f"Erasing tracks with select byte: {hex(sel_byte)}")
+            erase_card(msr, sel_byte)
 
 if __name__ == "__main__":
     main()
