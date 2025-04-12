@@ -11,6 +11,15 @@ This file contains:
       * "write" mode: writes card data with track data passed as command-line arguments.
       * "erase" mode: erases card data for specified tracks.
 """
+import os
+import ctypes
+
+# Force load libusb DLL manually
+dll_path = os.path.join(os.path.dirname(__file__), "libusb-1.0.dll")
+try:
+    ctypes.CDLL(dll_path)
+except OSError as e:
+    raise ImportError(f"Failed to load libusb-1.0.dll manually: {e}")
 
 import usb.core
 import usb.util
@@ -31,8 +40,12 @@ class MSR605X:
         if "idVendor" not in kwargs:
             kwargs["idVendor"] = 0x0801
             kwargs["idProduct"] = 0x0003
-        # Force pyusb to use the libusb1 backend
-        backend = usb.backend.libusb1.get_backend()
+
+        backend = usb.backend.libusb1.get_backend(find_library=lambda x: dll_path)
+
+        if backend is None:
+            raise ImportError(f"libusb backend not loaded (dll_path tried: {dll_path})")
+
         self.dev = usb.core.find(backend=backend, **kwargs)
         if self.dev is None:
             raise ValueError("Device not found. Check connection and driver installation.")
